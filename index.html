@@ -180,6 +180,13 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
 .aub input{display:block;width:100%;margin:10px 0;padding:12px 14px;font:600 16px Inter,sans-serif;color:#fff;background:#1b1030;border:1px solid #f5c54288;border-radius:12px;outline:0}
 .aub input:focus{border-color:var(--g);box-shadow:0 0 12px #f5c54255}
 #ae{min-height:20px;color:#f87171;font-size:13px}
+.tabs{display:flex;gap:8px;margin:12px 0 4px}.tabs button{flex:1;padding:9px 0}.tabs button.on{border-color:var(--g);background:linear-gradient(#f5c54255,#f5c54222);color:#fff3a6}
+.aub .go{width:100%;margin-top:6px}
+.avr{margin:8px 0;text-align:left}.avr small{display:block;color:#b4a8c8;margin-bottom:4px}.avr div{display:flex;flex-wrap:wrap;gap:6px}
+.avc{width:34px;height:34px;padding:0;border-radius:50%;box-shadow:0 2px 0 #0007;border:2px solid #ffffff44}.avc.on{border-color:var(--g);transform:scale(1.15);box-shadow:0 0 10px var(--g)}
+.avc.avi{background:#1b1030;display:grid;place-items:center}.avc.avi svg{width:22px;height:22px}
+.avrnd{width:100%;margin-top:6px;padding:8px}
+#pf{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:#000b;backdrop-filter:blur(6px)}#pf.on{display:flex}
 </style>
 </head>
 <body>
@@ -208,7 +215,7 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
   <div class="brand" onclick="show('lobby')"><svg><use href="#s-crown"/></svg><div><div class="logo">ROYAL MATH</div><div class="slo">Trí tuệ là vốn · Chơi vui, có trách nhiệm</div></div></div>
   <div class="bw"><svg><use href="#s-coin"/></svg><b id="bal">0</b></div>
   <button class="go" onclick="startQ()">Giải toán kiếm xu</button>
-<div style="display:flex;gap:8px;align-items:center"><span class="mode" id="mode">Offline</span><button class="hb" id="lo" onclick="logout()" title="Đăng xuất" style="display:none">⎋</button><button class="hb" onclick="lb()" title="Bảng xếp hạng">🏆</button><button class="hb" id="mu" onclick="mute()" title="Âm thanh">🔊</button></div></header>
+<div style="display:flex;gap:8px;align-items:center"><span class="mode" id="mode">Offline</span><button class="hb" id="avb" onclick="openPf()" title="Hồ sơ &amp; ảnh đại diện" style="display:none;padding:3px;border-radius:50%"></button><button class="hb" onclick="lb()" title="Bảng xếp hạng">🏆</button><button class="hb" id="mu" onclick="mute()" title="Âm thanh">🔊</button></div></header>
 
 <main>
 <section class="p on" id="lobby">
@@ -277,11 +284,17 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
 <footer>Royal Math chỉ dùng xu ảo, không quy đổi ra tiền thật. Chơi vui, có trách nhiệm.</footer>
 
 <div id="betbar"><span>Cược <b id="bv" style="color:var(--g)"></b></span><div id="chips" style="display:flex;gap:12px"></div></div>
-<div id="au"><div class="aub"><h2>ROYAL MATH</h2><p class="mut">Đăng nhập để chơi và lưu xu của bạn</p>
+<div id="au"><div class="aub"><h2>ROYAL MATH</h2>
+<div class="tabs"><button id="tl" class="on" onclick="authTab('login')">Đăng nhập</button><button id="tr" onclick="authTab('register')">Đăng ký</button></div>
+<p class="mut" id="ah"></p>
 <input id="auu" placeholder="Tên đăng nhập" maxlength="16" autocomplete="username">
-<input id="aup" type="password" placeholder="Mật khẩu" maxlength="64" autocomplete="current-password" onkeydown="if(event.key=='Enter')doAuth('login')">
+<input id="aup" type="password" placeholder="Mật khẩu" maxlength="64" autocomplete="current-password" onkeydown="if(event.key=='Enter')doAuth()">
+<input id="aup2" type="password" placeholder="Nhập lại mật khẩu" maxlength="64" autocomplete="new-password" style="display:none" onkeydown="if(event.key=='Enter')doAuth()">
+<div id="avr0" style="display:none"></div>
 <div id="ae"></div>
-<div class="row"><button class="go" onclick="doAuth('login')">Đăng nhập</button><button onclick="doAuth('register')">Đăng ký</button></div></div></div>
+<button class="go" id="abtn" onclick="doAuth()">Đăng nhập</button></div></div>
+<div id="pf" onclick="if(event.target==this)this.classList.remove('on')"><div class="lbx"><h2 id="pfn">Hồ sơ</h2><div id="pfb"></div>
+<div class="row"><button class="go" onclick="saveAv()">Lưu ảnh đại diện</button><button onclick="logout()">Đăng xuất</button><button onclick="$('#pf').classList.remove('on')">Đóng</button></div></div></div>
 <div id="toast"></div>
 
 <div id="qz"><div class="qb">
@@ -512,7 +525,7 @@ th:'Mỗi người nhận 2 lá, 5 lá chung mở dần: Flop (3), Turn (1), Riv
 $$('.p.g').forEach(p=>{const r=RULES[p.id];if(r)p.querySelector('.ph').insertAdjacentHTML('afterend',`<details class="rule"><summary>📖 Luật chơi</summary><div>${r}</div></details>`)});
 async function lb(){let rows;if(API.on){try{rows=(await API.call('lb')).rows}catch(e){}}
  if(!rows)rows=[{n:'Bạn (máy này)',peak:S.peak||S.bal,solved:S.solved,me:1}];
- $('#lbb').innerHTML=rows.map((r,i)=>`<div class="lr${r.me?' me':''}"><b>${i+1}</b><span>${E(r.n)}</span><em>${fmt(r.peak)}</em><small>Đỉnh xu · ${r.solved} câu đúng</small></div>`).join('')+(API.on?'':'<p class="mut">Chạy <b>server.js</b> để xếp hạng cùng mọi người chơi.</p>');$('#lb').classList.add('on')}
+ $('#lbb').innerHTML=rows.map((r,i)=>`<div class="lr${r.me?' me':''}"><b>${i+1}</b><span style="display:flex;align-items:center;gap:8px">${avHTML(r.av,28)}${E(r.n)}</span><em>${fmt(r.peak)}</em><small>Đỉnh xu · ${r.solved} câu đúng</small></div>`).join('')+(API.on?'':'<p class="mut">Chạy <b>server.js</b> để xếp hạng cùng mọi người chơi.</p>');$('#lb').classList.add('on')}
 mute();mute();
 
 /* ===== SINH ĐỀ NGẪU NHIÊN THEO CHƯƠNG TRÌNH THPT LỚP 12 ===== */
@@ -606,22 +619,49 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 addEventListener('beforeunload',e=>{if(Q&&Q.live){e.preventDefault();e.returnValue=''}});
 
 save();chipUI();colUI();
-/* ===== ĐĂNG NHẬP ===== */
+/* ===== ĐĂNG NHẬP + ẢNH ĐẠI DIỆN ===== */
+const AVB=[['#7c1d6f','#2a0b3a'],['#b91c1c','#450a0a'],['#0e7490','#082f49'],['#15803d','#052e16'],['#b45309','#451a03'],['#3730a3','#1e1b4b'],['#be185d','#500724'],['#334155','#0f172a'],['#0f766e','#042f2e'],['#a16207','#422006']],
+AVI=['crown','coin','cherry','lemon','bell','star','seven','gem','dice','wheel','cards','dt','poker','spade'],
+AVF=['#f5c542','#d1d5db','#4ade80','#f472b6'],AVC={gem:'#38bdf8',spade:'#f5c542'};
+function avHTML(a,sz){if(!Array.isArray(a)||a.length!=3)a=[0,0,0];const b=AVB[a[0]]||AVB[0],n=AVI[a[1]]||AVI[0],f=AVF[a[2]]||AVF[0],g='avg'+a[0];
+ return `<svg viewBox="0 0 64 64" width="${sz}" height="${sz}" style="display:block;flex:none"><defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${b[0]}"/><stop offset="1" stop-color="${b[1]}"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#${g})" stroke="${f}" stroke-width="4"/><use href="#s-${n}" x="14" y="14" width="36" height="36" style="color:${AVC[n]||'#fff'}"/></svg>`}
+function avPick(box,st){
+ const sw=(k,arr,fn)=>arr.map((x,i)=>`<button type="button" class="avc${st[k]==i?' on':''}" data-k="${k}" data-v="${i}" style="${fn(x)}"></button>`).join('');
+ const ico=AVI.map((n,i)=>`<button type="button" class="avc avi${st[1]==i?' on':''}" data-k="1" data-v="${i}"><svg viewBox="0 0 64 64"><use href="#s-${n}" style="color:${AVC[n]||'#fff'}"/></svg></button>`).join('');
+ box.innerHTML=`<div style="display:flex;justify-content:center;margin:6px 0 10px">${avHTML(st,92)}</div>`
+  +`<div class="avr"><small>Màu nền</small><div>${sw(0,AVB,c=>'background:linear-gradient(135deg,'+c[0]+','+c[1]+')')}</div></div>`
+  +`<div class="avr"><small>Biểu tượng</small><div>${ico}</div></div>`
+  +`<div class="avr"><small>Viền</small><div>${sw(2,AVF,c=>'background:'+c)}</div></div>`
+  +`<button type="button" class="avrnd" data-rnd="1">🎲 Ngẫu nhiên</button>`;
+ box.onclick=e=>{const b=e.target.closest('[data-k]');
+  if(b)st[+b.dataset.k]=+b.dataset.v;else if(e.target.closest('[data-rnd]')){st[0]=R(AVB.length);st[1]=R(AVI.length);st[2]=R(AVF.length)}else return;
+  avPick(box,st)}}
+let AM='login',AVR=[R(AVB.length),R(AVI.length),R(AVF.length)],AVP=[0,0,0],ME=null;
 function authUI(show,err){$('#au').classList.toggle('on',show);$('#ae').textContent=err||'';if(show)setTimeout(()=>$('#auu').focus(),50)}
+function authTab(m){AM=m;const reg=m=='register';$('#tl').classList.toggle('on',!reg);$('#tr').classList.toggle('on',reg);
+ $('#aup2').style.display=$('#avr0').style.display=reg?'':'none';$('#abtn').textContent=reg?'Tạo tài khoản':'Đăng nhập';
+ $('#aup').autocomplete=reg?'new-password':'current-password';
+ $('#ah').textContent=reg?'Tạo tài khoản mới và chọn ảnh đại diện của bạn':'Phải đăng ký tài khoản trước, rồi mới đăng nhập được';$('#ae').textContent='';
+ if(reg)avPick($('#avr0'),AVR)}
+function setMe(j){ME={name:j.name,av:j.av};$('#avb').innerHTML=avHTML(j.av,34);$('#avb').style.display=''}
 function enter(j){API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}API.on=1;S.bal=j.bal;S.solved=j.solved;save();
- $('#mode').textContent=j.name+' ✓';$('#mode').classList.add('on');$('#lo').style.display='';authUI(false)}
+ $('#mode').textContent=j.name+' ✓';$('#mode').classList.add('on');setMe(j);authUI(false)}
 async function boot(){const sid=API.sid||localStorage.getItem('rm_sid')||'';
  try{const r=await fetch('/api/session',{method:'POST',headers:{'X-Sid':sid}});
-  if(r.status==401){API.sid=sid;return authUI(true)}
+  if(r.status==401){API.sid=sid;authTab(AM);return authUI(true)}
   if(!r.ok)throw 0;enter(await r.json())}catch(e){/* không có server: chạy offline */}}
-async function doAuth(kind){const u=$('#auu').value.trim(),p=$('#aup').value;
+async function doAuth(){const kind=AM,u=$('#auu').value.trim(),p=$('#aup').value;
  if(!u||!p)return authUI(true,'Nhập đủ tên đăng nhập và mật khẩu');
- try{const r=await fetch('/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json','X-Sid':API.sid||localStorage.getItem('rm_sid')||''},body:JSON.stringify({u,p})});
-  const j=await r.json();if(!r.ok)return authUI(true,j.err||'Có lỗi xảy ra');
-  API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}$('#aup').value='';boot()}
+ if(kind=='register'&&p!==$('#aup2').value)return authUI(true,'Mật khẩu nhập lại không khớp');
+ try{const r=await fetch('/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json','X-Sid':API.sid||localStorage.getItem('rm_sid')||''},body:JSON.stringify({u,p,av:kind=='register'?AVR:undefined})});
+  const j=await r.json();
+  if(!r.ok){if(r.status==404&&kind=='login'){authTab('register');$('#auu').value=u;$('#ae').textContent=j.err}else authUI(true,j.err||'Có lỗi xảy ra');return}
+  API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}$('#aup').value=$('#aup2').value='';boot()}
  catch(e){authUI(true,'Không kết nối được server')}}
+function openPf(){if(!ME)return;AVP=ME.av.slice();$('#pfn').textContent=ME.name;avPick($('#pfb'),AVP);$('#pf').classList.add('on')}
+function saveAv(){API.call('avatar',{av:AVP}).then(j=>{setMe({name:ME.name,av:j.av});$('#pf').classList.remove('on');msg('Đã lưu ảnh đại diện')}).catch(e=>msg((e&&e.err)||'Không lưu được'))}
 function logout(){try{localStorage.removeItem('rm_sid')}catch(e){}API.sid='';location.reload()}
-boot();
+authTab('login');boot();
 </script>
 </body>
 </html>

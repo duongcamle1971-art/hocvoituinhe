@@ -19,14 +19,14 @@ const sign = id => crypto.createHmac('sha256', db.secret).update(id).digest('hex
 const getUser = h => { const [id, sg] = String(h || '').split('.'); return id && sg && sign(id) === sg ? db.users[id] : null; };
 
 // ---- Tài khoản: tên đăng nhập + mật khẩu (băm bằng scrypt có sẵn của Node) ----
-const tries = {};   // chống dò mật khẩu: tối đa 10 lần / 10 phút cho mỗi IP
-const tooMany = ip => { const n = Date.now(), a = (tries[ip] = (tries[ip] || []).filter(t => n - t < 600000)); a.push(n); return a.length > 10; };
 const okName = s => /^[\p{L}\p{N}_.-]{3,16}$/u.test(s);
 const hashPw = async (pw, salt) => (await scrypt(pw, salt, 32)).toString('hex');
-const DUMMY_SALT = crypto.randomBytes(16).toString('hex');
+// Ảnh đại diện: [màu nền 0-9, biểu tượng 0-13, viền 0-3]
+const AVN = [10, 14, 4];
+const okAv = a => Array.isArray(a) && a.length === 3 && a.every((v, i) => Number.isInteger(v) && v >= 0 && v < AVN[i]);
+const rndAv = () => AVN.map(n => crypto.randomInt(n));
 
-async function auth(kind, b, cur, ip) {
-  if (tooMany(ip)) return [429, { err: 'Thử quá nhiều lần, hãy chờ vài phút' }];
+async function auth(kind, b, cur) {
   const name = String(b.u || '').normalize('NFC').trim(), pw = String(b.p || ''), key = name.toLowerCase();
   if (kind === 'register') {
     if (!okName(name)) return [400, { err: 'Tên đăng nhập 3–16 ký tự: chữ, số, _ . -' }];
@@ -39,16 +39,18 @@ async function auth(kind, b, cur, ip) {
     if (u) id = u.sid.split('.')[0];
     else { id = crypto.randomBytes(8).toString('hex');
       u = db.users[id] = { sid: id + '.' + sign(id), bal: 0, peak: 0, solved: 0, open: {}, last: {}, flags: 0, qlock: 0 }; }
+    u.av = okAv(b.av) ? b.av : (u.av || rndAv());
     u.acct = key; u.name = name; u.named = 1;
     db.accounts[key] = { salt, hash, uid: id };
-    return [200, { sid: u.sid, name: u.name }];
+    return [200, { sid: u.sid, name: u.name, av: u.av }];
   }
   // login
   const acc = db.accounts[key];
-  const h = Buffer.from(await hashPw(pw, acc ? acc.salt : DUMMY_SALT), 'hex');
-  const good = acc && crypto.timingSafeEqual(h, Buffer.from(acc.hash, 'hex')) && db.users[acc.uid];
-  if (!good) return [401, { err: 'Sai tên đăng nhập hoặc mật khẩu' }];
-  return [200, { sid: db.users[acc.uid].sid, name: db.users[acc.uid].name }];
+  if (!acc) return [404, { err: 'Tài khoản chưa đăng ký. Hãy đăng ký trước rồi mới đăng nhập.' }];
+  const h = Buffer.from(await hashPw(pw, acc.salt), 'hex');
+  const good = crypto.timingSafeEqual(h, Buffer.from(acc.hash, 'hex')) && db.users[acc.uid];
+  if (!good) return [401, { err: 'Sai mật khẩu' }];
+  return [200, { sid: db.users[acc.uid].sid, name: db.users[acc.uid].name, av: db.users[acc.uid].av || [0, 0, 0] }];
 }
 
 // Trần thưởng (bội số tối đa trên tiền cược) và thời gian tối thiểu của một ván
@@ -62,10 +64,11 @@ function handle(u, p, b, now) {
   u.hits = (u.hits || []).filter(t => now - t < 1000); u.hits.push(now);
   if (u.hits.length > 12) { u.flags += 0.2; return err('Thao tác quá nhanh', 429); }
   switch (p) {
-    case 'session': return reply({ sid: u.sid, name: u.name });
+    case 'session': return reply({ sid: u.sid, name: u.name, av: u.av || [0, 0, 0] });
+    case 'avatar': if (!okAv(b.av)) return err('Ảnh đại diện không hợp lệ'); u.av = b.av; return reply({ av: u.av });
     case 'lb': {
       const rows = Object.values(db.users).filter(x => x.acct).sort((x, y) => y.peak - x.peak).slice(0, 10)
-        .map(x => ({ n: x.name, peak: x.peak, solved: x.solved, me: x === u }));
+        .map(x => ({ n: x.name, peak: x.peak, solved: x.solved, av: x.av || [0, 0, 0], me: x === u }));
       return reply({ rows });
     }
     case 'q': {
@@ -111,9 +114,7 @@ http.createServer((req, res) => {
       let b = {}; try { b = JSON.parse(body || '{}'); } catch (e) {}
       const cur = getUser(req.headers['x-sid']);
       if (m[1] === 'register' || m[1] === 'login') {
-        // nếu chạy sau proxy (Render, Railway…) thì IP thật nằm ở x-forwarded-for
-        const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
-        const [c, o] = await auth(m[1], b, cur, ip); dirty = true; return send(c, o);
+        const [c, o] = await auth(m[1], b, cur); dirty = true; return send(c, o);
       }
       if (!cur || !cur.acct) return send(401, { err: 'Cần đăng nhập' });
       const [c, o] = handle(cur, m[1], b, Date.now()); dirty = true; send(c, o);
