@@ -171,6 +171,15 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
 .lr{display:grid;grid-template-columns:28px 1fr auto;gap:2px 10px;align-items:center;padding:9px 6px;border-bottom:1px solid #ffffff14}.lr b{color:var(--g);font-family:Cinzel,serif}.lr em{font-style:normal;font-weight:800;color:#fff3a6}.lr small{grid-column:2/4;color:#b4a8c8}.lr.me{background:#f5c54218;border-radius:10px}
 .ph h2::after{content:'';display:block;height:2px;margin-top:4px;background:linear-gradient(90deg,var(--g),transparent)}
 .cup{cursor:grab;touch-action:none}.cup:active{cursor:grabbing}
+
+/* đăng nhập */
+#au{position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;padding:16px;background:radial-gradient(ellipse at top,#4a1030,#07050c)}
+#au.on{display:flex}
+.aub{width:min(360px,100%);padding:24px 20px;border-radius:20px;text-align:center;background:linear-gradient(#2a0f3a,#12071c);border:1px solid var(--g);box-shadow:0 0 50px #f5c54233}
+.aub h2{margin:0 0 6px;font:800 26px Cinzel,serif;letter-spacing:3px;color:var(--g)}
+.aub input{display:block;width:100%;margin:10px 0;padding:12px 14px;font:600 16px Inter,sans-serif;color:#fff;background:#1b1030;border:1px solid #f5c54288;border-radius:12px;outline:0}
+.aub input:focus{border-color:var(--g);box-shadow:0 0 12px #f5c54255}
+#ae{min-height:20px;color:#f87171;font-size:13px}
 </style>
 </head>
 <body>
@@ -199,7 +208,7 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
   <div class="brand" onclick="show('lobby')"><svg><use href="#s-crown"/></svg><div><div class="logo">ROYAL MATH</div><div class="slo">Trí tuệ là vốn · Chơi vui, có trách nhiệm</div></div></div>
   <div class="bw"><svg><use href="#s-coin"/></svg><b id="bal">0</b></div>
   <button class="go" onclick="startQ()">Giải toán kiếm xu</button>
-<div style="display:flex;gap:8px;align-items:center"><span class="mode" id="mode">Offline</span><button class="hb" onclick="lb()" title="Bảng xếp hạng">🏆</button><button class="hb" id="mu" onclick="mute()" title="Âm thanh">🔊</button></div></header>
+<div style="display:flex;gap:8px;align-items:center"><span class="mode" id="mode">Offline</span><button class="hb" id="lo" onclick="logout()" title="Đăng xuất" style="display:none">⎋</button><button class="hb" onclick="lb()" title="Bảng xếp hạng">🏆</button><button class="hb" id="mu" onclick="mute()" title="Âm thanh">🔊</button></div></header>
 
 <main>
 <section class="p on" id="lobby">
@@ -268,6 +277,11 @@ footer{max-width:780px;margin:24px auto 0;padding:0 16px;text-align:center;color
 <footer>Royal Math chỉ dùng xu ảo, không quy đổi ra tiền thật. Chơi vui, có trách nhiệm.</footer>
 
 <div id="betbar"><span>Cược <b id="bv" style="color:var(--g)"></b></span><div id="chips" style="display:flex;gap:12px"></div></div>
+<div id="au"><div class="aub"><h2>ROYAL MATH</h2><p class="mut">Đăng nhập để chơi và lưu xu của bạn</p>
+<input id="auu" placeholder="Tên đăng nhập" maxlength="16" autocomplete="username">
+<input id="aup" type="password" placeholder="Mật khẩu" maxlength="64" autocomplete="current-password" onkeydown="if(event.key=='Enter')doAuth('login')">
+<div id="ae"></div>
+<div class="row"><button class="go" onclick="doAuth('login')">Đăng nhập</button><button onclick="doAuth('register')">Đăng ký</button></div></div></div>
 <div id="toast"></div>
 
 <div id="qz"><div class="qb">
@@ -289,7 +303,7 @@ const SND={chip:()=>{tone(1900,.05,'square',.03);tone(1300,.07,'square',.025,.04
 function mute(){muted=!muted;try{localStorage.setItem('rm_mute',muted?'1':'0')}catch(e){}$('#mu').textContent=muted?'🔇':'🔊'}
 /* kết nối server chống gian lận (nếu có) */
 const API={on:0,sid:'',n:0,q:Promise.resolve(),
- call(p,b){const f=()=>fetch('/api/'+p,{method:'POST',headers:{'Content-Type':'application/json','X-Sid':API.sid},body:JSON.stringify(b||{})}).then(r=>r.json().then(j=>{if(!r.ok)throw j;return j}));
+ call(p,b){const f=()=>fetch('/api/'+p,{method:'POST',headers:{'Content-Type':'application/json','X-Sid':API.sid},body:JSON.stringify(b||{})}).then(r=>r.json().then(j=>{if(!r.ok){if(r.status==401&&window.authUI)authUI(true);throw j}return j}));
   API.n++;const pr=API.q.then(f,f).finally(()=>API.n--);API.q=pr.catch(()=>0);return pr},
  post(p,b){return API.call(p,b).then(srv).catch(e=>{if(e&&e.err)msg(e.err);srv(e)})}};
 function srv(j){if(!j||typeof j.bal!='number'||API.n>0)return;S.bal=j.bal;if(typeof j.solved=='number')S.solved=j.solved;save()}
@@ -592,9 +606,22 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 addEventListener('beforeunload',e=>{if(Q&&Q.live){e.preventDefault();e.returnValue=''}});
 
 save();chipUI();colUI();
-(async()=>{try{const r=await fetch('/api/session',{method:'POST',headers:{'X-Sid':localStorage.getItem('rm_sid')||''}});if(!r.ok)throw 0;const j=await r.json();
- API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}API.on=1;S.bal=j.bal;S.solved=j.solved;save();$('#mode').textContent='Server ✓';$('#mode').classList.add('on');
- if(!j.named){const n=prompt('Tên hiển thị trên bảng xếp hạng?');if(n)API.post('name',{n})}}catch(e){}})();
+/* ===== ĐĂNG NHẬP ===== */
+function authUI(show,err){$('#au').classList.toggle('on',show);$('#ae').textContent=err||'';if(show)setTimeout(()=>$('#auu').focus(),50)}
+function enter(j){API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}API.on=1;S.bal=j.bal;S.solved=j.solved;save();
+ $('#mode').textContent=j.name+' ✓';$('#mode').classList.add('on');$('#lo').style.display='';authUI(false)}
+async function boot(){const sid=API.sid||localStorage.getItem('rm_sid')||'';
+ try{const r=await fetch('/api/session',{method:'POST',headers:{'X-Sid':sid}});
+  if(r.status==401){API.sid=sid;return authUI(true)}
+  if(!r.ok)throw 0;enter(await r.json())}catch(e){/* không có server: chạy offline */}}
+async function doAuth(kind){const u=$('#auu').value.trim(),p=$('#aup').value;
+ if(!u||!p)return authUI(true,'Nhập đủ tên đăng nhập và mật khẩu');
+ try{const r=await fetch('/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json','X-Sid':API.sid||localStorage.getItem('rm_sid')||''},body:JSON.stringify({u,p})});
+  const j=await r.json();if(!r.ok)return authUI(true,j.err||'Có lỗi xảy ra');
+  API.sid=j.sid;try{localStorage.setItem('rm_sid',j.sid)}catch(e){}$('#aup').value='';boot()}
+ catch(e){authUI(true,'Không kết nối được server')}}
+function logout(){try{localStorage.removeItem('rm_sid')}catch(e){}API.sid='';location.reload()}
+boot();
 </script>
 </body>
 </html>
