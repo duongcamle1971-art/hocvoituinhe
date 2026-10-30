@@ -1,6 +1,7 @@
-// Royal Math – server chống gian lận (Node 16+, không cần cài thêm gói)
+// Royal Math – server chống gian lận + tài khoản (Node 16+, không cần cài thêm gói)
 // Chạy:  node server.js   →  mở http://localhost:3000
 const http = require('http'), fs = require('fs'), vm = require('vm'), crypto = require('crypto'), path = require('path');
+const { promisify } = require('util'), scrypt = promisify(crypto.scrypt);
 const PORT = process.env.PORT || 3000, DBF = path.join(__dirname, 'data.json'), IDX = path.join(__dirname, 'index.html');
 const REW = 2000, QT = 60, MINANS = 2500;
 
@@ -9,12 +10,46 @@ const src = fs.readFileSync(IDX, 'utf8');
 const genQ = vm.runInNewContext('const R=n=>Math.floor(Math.random()*n);const window={};' +
   src.slice(src.indexOf('/*GEN-START*/'), src.indexOf('/*GEN-END*/')) + ';genQ');
 
-let db = { secret: crypto.randomBytes(24).toString('hex'), users: {} };
+let db = { secret: crypto.randomBytes(24).toString('hex'), users: {}, accounts: {} };
 try { db = JSON.parse(fs.readFileSync(DBF, 'utf8')); } catch (e) {}
+db.accounts = db.accounts || {};
 let dirty = false;
 setInterval(() => { if (dirty) { dirty = false; fs.writeFile(DBF, JSON.stringify(db), () => {}); } }, 5000);
 const sign = id => crypto.createHmac('sha256', db.secret).update(id).digest('hex').slice(0, 20);
 const getUser = h => { const [id, sg] = String(h || '').split('.'); return id && sg && sign(id) === sg ? db.users[id] : null; };
+
+// ---- Tài khoản: tên đăng nhập + mật khẩu (băm bằng scrypt có sẵn của Node) ----
+const tries = {};   // chống dò mật khẩu: tối đa 10 lần / 10 phút cho mỗi IP
+const tooMany = ip => { const n = Date.now(), a = (tries[ip] = (tries[ip] || []).filter(t => n - t < 600000)); a.push(n); return a.length > 10; };
+const okName = s => /^[\p{L}\p{N}_.-]{3,16}$/u.test(s);
+const hashPw = async (pw, salt) => (await scrypt(pw, salt, 32)).toString('hex');
+const DUMMY_SALT = crypto.randomBytes(16).toString('hex');
+
+async function auth(kind, b, cur, ip) {
+  if (tooMany(ip)) return [429, { err: 'Thử quá nhiều lần, hãy chờ vài phút' }];
+  const name = String(b.u || '').normalize('NFC').trim(), pw = String(b.p || ''), key = name.toLowerCase();
+  if (kind === 'register') {
+    if (!okName(name)) return [400, { err: 'Tên đăng nhập 3–16 ký tự: chữ, số, _ . -' }];
+    if (pw.length < 6 || pw.length > 64) return [400, { err: 'Mật khẩu dài 6–64 ký tự' }];
+    if (db.accounts[key]) return [409, { err: 'Tên đăng nhập đã có người dùng' }];
+    const salt = crypto.randomBytes(16).toString('hex'), hash = await hashPw(pw, salt);
+    if (db.accounts[key]) return [409, { err: 'Tên đăng nhập đã có người dùng' }];
+    let u = cur && !cur.acct ? cur : null;   // nếu đang có phiên ẩn danh cũ thì giữ lại xu/tiến độ
+    let id;
+    if (u) id = u.sid.split('.')[0];
+    else { id = crypto.randomBytes(8).toString('hex');
+      u = db.users[id] = { sid: id + '.' + sign(id), bal: 0, peak: 0, solved: 0, open: {}, last: {}, flags: 0, qlock: 0 }; }
+    u.acct = key; u.name = name; u.named = 1;
+    db.accounts[key] = { salt, hash, uid: id };
+    return [200, { sid: u.sid, name: u.name }];
+  }
+  // login
+  const acc = db.accounts[key];
+  const h = Buffer.from(await hashPw(pw, acc ? acc.salt : DUMMY_SALT), 'hex');
+  const good = acc && crypto.timingSafeEqual(h, Buffer.from(acc.hash, 'hex')) && db.users[acc.uid];
+  if (!good) return [401, { err: 'Sai tên đăng nhập hoặc mật khẩu' }];
+  return [200, { sid: db.users[acc.uid].sid, name: db.users[acc.uid].name }];
+}
 
 // Trần thưởng (bội số tối đa trên tiền cược) và thời gian tối thiểu của một ván
 const MAX = { tx: 2, slot: 100, gacha: 8, bj: 2.5, lh: 9, vp: 250, rl: 36, mn: 1000, hl: 1000, th: 3 };
@@ -27,10 +62,9 @@ function handle(u, p, b, now) {
   u.hits = (u.hits || []).filter(t => now - t < 1000); u.hits.push(now);
   if (u.hits.length > 12) { u.flags += 0.2; return err('Thao tác quá nhanh', 429); }
   switch (p) {
-    case 'session': return reply({ sid: u.sid, named: !!u.named });
-    case 'name': u.name = String(b.n || '').replace(/[^\p{L}\p{N} _.-]/gu, '').slice(0, 16) || u.name; u.named = 1; return reply();
+    case 'session': return reply({ sid: u.sid, name: u.name });
     case 'lb': {
-      const rows = Object.values(db.users).sort((x, y) => y.peak - x.peak).slice(0, 10)
+      const rows = Object.values(db.users).filter(x => x.acct).sort((x, y) => y.peak - x.peak).slice(0, 10)
         .map(x => ({ n: x.name, peak: x.peak, solved: x.solved, me: x === u }));
       return reply({ rows });
     }
@@ -72,14 +106,17 @@ http.createServer((req, res) => {
   if (req.method === 'GET') return send(200, fs.readFileSync(IDX, 'utf8'), 'text/html');
   const m = /^\/api\/(\w+)$/.exec(req.url); if (req.method !== 'POST' || !m) return send(404, { err: 'Not found' });
   let body = ''; req.on('data', c => { body += c; if (body.length > 4096) req.destroy(); });
-  req.on('end', () => {
-    let b = {}; try { b = JSON.parse(body || '{}'); } catch (e) {}
-    let u = getUser(req.headers['x-sid']);
-    if (!u) {
-      if (m[1] !== 'session') return send(401, { err: 'Phiên không hợp lệ' });
-      const id = crypto.randomBytes(8).toString('hex');
-      u = db.users[id] = { sid: id + '.' + sign(id), name: 'Người chơi #' + id.slice(0, 4), bal: 0, peak: 0, solved: 0, open: {}, last: {}, flags: 0, qlock: 0 };
-    }
-    const [c, o] = handle(u, m[1], b, Date.now()); dirty = true; send(c, o);
+  req.on('end', async () => {
+    try {
+      let b = {}; try { b = JSON.parse(body || '{}'); } catch (e) {}
+      const cur = getUser(req.headers['x-sid']);
+      if (m[1] === 'register' || m[1] === 'login') {
+        // nếu chạy sau proxy (Render, Railway…) thì IP thật nằm ở x-forwarded-for
+        const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
+        const [c, o] = await auth(m[1], b, cur, ip); dirty = true; return send(c, o);
+      }
+      if (!cur || !cur.acct) return send(401, { err: 'Cần đăng nhập' });
+      const [c, o] = handle(cur, m[1], b, Date.now()); dirty = true; send(c, o);
+    } catch (e) { send(500, { err: 'Lỗi máy chủ' }); }
   });
 }).listen(PORT, () => console.log('Royal Math chạy tại http://localhost:' + PORT));
